@@ -40,19 +40,20 @@ export default function Home() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-slate-50 to-slate-100 py-8">
+    <div className="min-h-screen bg-slate-50 py-8">
       <div className="max-w-6xl mx-auto px-4 space-y-6">
-        <header className="flex flex-col gap-2">
+        <header className="space-y-2">
           <h1 className="text-3xl font-bold text-slate-900">Texas de Peru Speaking Agent</h1>
           <p className="text-slate-600 max-w-2xl">
-            Search for conferences, associations, and healthcare events where you can talk about surgical missions,
-            servant leadership, and global health.
+            Search for conferences, associations, and healthcare events where Texas de Peru’s mission would fit.
           </p>
         </header>
 
         <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-4 md:p-6 space-y-4">
           <div>
-            <label className="text-sm font-medium text-slate-800">Topics & keywords (comma-separated)</label>
+            <label className="text-sm font-medium text-slate-800">
+              Topics & keywords (comma-separated)
+            </label>
             <input
               className="w-full mt-2 rounded-xl border-slate-200 focus:border-slate-400 focus:ring-2 focus:ring-slate-100 border px-3 py-2 bg-slate-50"
               value={topics}
@@ -104,7 +105,7 @@ export default function Home() {
             </thead>
             <tbody>
               {rows.map((r, i) => (
-                <tr key={i} className="border-t border-slate-100 hover:bg-slate-50/60">
+                <tr key={i} className="border-t border-slate-100 hover:bg-slate-50/70">
                   <td className="p-3 font-semibold text-slate-900">{r.score}</td>
                   <td className="p-3">
                     <a className="text-slate-900 hover:underline" href={r.url} target="_blank" rel="noreferrer">
