@@ -1,4 +1,5 @@
 // lib/queries.ts
+
 export function buildQueries(input: { topics: string[]; prioritizeHealthcare: boolean }) {
   const base = [
     'call for speakers',
@@ -44,7 +45,7 @@ export function buildQueries(input: { topics: string[]; prioritizeHealthcare: bo
 
   for (const s of seeds) {
     for (const t of topics) {
-      combos.push(\`\${s} \${t}\`);
+      combos.push(`${s} ${t}`);
     }
   }
 
