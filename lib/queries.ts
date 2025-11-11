@@ -1,6 +1,13 @@
 // lib/queries.ts
 
-export function buildQueries(input: { topics: string[]; prioritizeHealthcare: boolean }) {
+// Build search phrases for the speaking agent.
+// We combine generic event phrases with user topics, and optionally add healthcare/Texas.
+export function buildQueries(input: {
+  topics: string[];
+  prioritizeHealthcare: boolean;
+  prioritizeTexas?: boolean;
+}) {
+  // generic event phrases
   const base = [
     'call for speakers',
     'keynote speakers',
@@ -14,6 +21,7 @@ export function buildQueries(input: { topics: string[]; prioritizeHealthcare: bo
     'faith based medical missions'
   ];
 
+  // healthcare / medical associations
   const healthcare = [
     'medical conference',
     'healthcare leadership conference',
@@ -21,13 +29,13 @@ export function buildQueries(input: { topics: string[]; prioritizeHealthcare: bo
     'MGMA conference',
     'HIMSS call for speakers',
     'ACHE congress call for proposals',
-    'Texas healthcare association conference',
     'ambulatory surgery association meeting',
     'AORN chapter meeting'
   ];
 
+  // if user didn't give topics, fall back to Kevin-style topics
   const topics = input.topics.length
-    ? input.topics
+    ? [...input.topics]
     : [
         'volunteer medical missions',
         'surgical missions Peru',
@@ -40,7 +48,28 @@ export function buildQueries(input: { topics: string[]; prioritizeHealthcare: bo
         'CSR healthcare'
       ];
 
+  // if Texas boost is on, mix in Texas/local variants
+  if (input.prioritizeTexas) {
+    const texasTopics = [
+      'Texas',
+      'Dallas',
+      'DFW',
+      'Houston',
+      'Austin',
+      'San Antonio',
+      'Fort Worth',
+      'Texas medical association'
+    ];
+    for (const t of texasTopics) {
+      if (!topics.includes(t)) {
+        topics.push(t);
+      }
+    }
+  }
+
+  // decide which seed phrases to use
   const seeds = input.prioritizeHealthcare ? base.concat(healthcare) : base;
+
   const combos: string[] = [];
 
   for (const s of seeds) {
