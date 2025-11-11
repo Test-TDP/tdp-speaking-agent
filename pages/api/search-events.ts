@@ -5,53 +5,62 @@ import { serpSearch } from '../../lib/serp';
 import { scoreAndExtract } from '../../lib/llm';
 import type { EventRecord } from '../../types';
 
-// Optional tuning via env (keeps prod responsive)
-const MAX_QUERIES = Number(process.env.MAX_QUERIES || 2);
-const DEFAULT_MAX_RESULTS = Number(process.env.MAX_CANDIDATES || 8);
+const TEXAS_STRINGS = [
+  'texas',
+  'tx',
+  'dallas',
+  'fort worth',
+  'dfw',
+  'austin',
+  'houston',
+  'san antonio',
+  'plano',
+  'arlington',
+  'irving',
+  'round rock'
+];
+
+// helper to decide if an event is in the future
+function isFutureEvent(ev: EventRecord): boolean {
+  const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+  const dateStr = ev.start_date || ev.end_date;
+  if (!dateStr) {
+    // if we don't know the date, keep it — organizer pages sometimes don't expose dates
+    return true;
+  }
+  // simple string compare works for ISO date format
+  return dateStr >= today;
+}
+
+// boost score if event looks Texas-based
+function applyTexasBoost(list: EventRecord[]) {
+  for (const ev of list) {
+    const loc = `${ev.city || ''} ${ev.state || ''} ${ev.country || ''}`.toLowerCase();
+    const hit = TEXAS_STRINGS.some(t => loc.includes(t));
+    if (hit) {
+      ev.score = (ev.score || 0) + 15;
+    }
+  }
+}
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
-  }
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   const {
     topics = [],
     prioritizeHealthcare = true,
     prioritizeTexas = true,
-    maxResults = DEFAULT_MAX_RESULTS,
-  } = (req.body || {}) as {
-    topics?: string[];
-    prioritizeHealthcare?: boolean;
-    prioritizeTexas?: boolean;
-    maxResults?: number;
-  };
-
-  // ===== DIAGNOSTIC LOGS (visible in Vercel deployment logs) =====
-  // NOTE: This is the line you asked to "modify" — I’m keeping it readable and adding more context.
-  console.log(
-    '[api/search-events] provider=%s model=%s serpKey=%s topics=%d maxResults=%d',
-    (process.env.LLM_PROVIDER || 'heuristic'),
-    (process.env.LLM_MODEL || ''),
-    process.env.SERPAPI_API_KEY ? 'SET' : 'MISSING',
-    Array.isArray(topics) ? topics.length : 0,
-    maxResults
-  );
-
-  if (!process.env.SERPAPI_API_KEY) {
-    // Fail fast if SerpAPI key missing in this environment
-    return res.status(500).json({
-      error: 'SERPAPI_API_KEY is missing in this environment (check Vercel → Settings → Environment Variables).',
-    });
-  }
+    maxResults = 8
+  } = req.body || {};
 
   try {
-    const queries = buildQueries({ topics, prioritizeHealthcare });
-
+    // NOTE: we now pass prioritizeTexas into buildQueries so the toggle actually does something
+    const queries = buildQueries({ topics, prioritizeHealthcare, prioritizeTexas });
     const seen = new Set<string>();
-    const candidates: { title: string; snippet: string; link: string }[] = [];
+    const candidates: any[] = [];
 
-    // Cap how many different search queries we execute to keep it fast
-    for (const q of queries.slice(0, Math.max(1, MAX_QUERIES))) {
+    // call SerpAPI for a handful of queries
+    for (const q of queries.slice(0, 8)) {
       // eslint-disable-next-line no-await-in-loop
       const rows = await serpSearch(q, maxResults);
       for (const r of rows) {
@@ -62,6 +71,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     const scored: EventRecord[] = [];
+
+    // run LLM extraction / scoring
     for (const c of candidates) {
       // eslint-disable-next-line no-await-in-loop
       const ext: any = await scoreAndExtract(c, { prioritizeHealthcare, prioritizeTexas });
@@ -79,20 +90,25 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         pays_speakers: ext.pays_speakers || 'unknown',
         verticals: ext.verticals || [],
         source: 'serp',
-        score: typeof ext.score === 'number' ? ext.score : 0,
+        score: ext.score ?? 0
       };
       scored.push(record);
     }
 
-    // sort by score desc
-    scored.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+    // filter out past events (only when we got a date)
+    const futureOnly = scored.filter(isFutureEvent);
 
-    // Extra diagnostic to see what we actually found
-    console.log('[api/search-events] candidates=%d results=%d', candidates.length, scored.length);
+    // apply Texas boost if user selected it
+    if (prioritizeTexas) {
+      applyTexasBoost(futureOnly);
+    }
 
-    return res.status(200).json({ count: scored.length, results: scored.slice(0, 50) });
+    // sort by score
+    futureOnly.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+
+    res.status(200).json({ count: futureOnly.length, results: futureOnly.slice(0, 50) });
   } catch (e: any) {
     console.error('search-events error:', e);
-    return res.status(500).json({ error: e?.message || 'Unknown error' });
+    res.status(500).json({ error: e.message || 'Unknown error' });
   }
 }
