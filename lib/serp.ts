@@ -1,10 +1,16 @@
+// lib/serp.ts
+const TBS_RECENCY = 'qdr:y'; // limit to results indexed in the last year
+
 export async function serpSearch(q: string, num = 10) {
   const apiKey = process.env.SERPAPI_API_KEY || '';
   const params = new URLSearchParams({
     engine: 'google',
     q,
     num: String(num),
-    api_key: apiKey
+    api_key: apiKey,
+    hl: 'en',
+    gl: 'us',
+    tbs: TBS_RECENCY
   });
   const url = `https://serpapi.com/search.json?${params.toString()}`;
   const res = await fetch(url);
