@@ -6,40 +6,40 @@ import { scoreAndExtract } from '../../lib/llm';
 import type { EventRecord } from '../../types';
 
 const TEXAS_STRINGS = [
-  'texas',
-  'tx',
-  'dallas',
-  'fort worth',
-  'dfw',
-  'austin',
-  'houston',
-  'san antonio',
-  'plano',
-  'arlington',
-  'irving',
-  'round rock'
+  'texas','tx','dallas','fort worth','dfw','austin','houston','san antonio','plano','arlington','irving','round rock'
 ];
 
-// helper to decide if an event is in the future
-function isFutureEvent(ev: EventRecord): boolean {
-  const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
-  const dateStr = ev.start_date || ev.end_date;
-  if (!dateStr) {
-    // if we don't know the date, keep it — organizer pages sometimes don't expose dates
-    return true;
-  }
-  // simple string compare works for ISO date format
-  return dateStr >= today;
+function isFutureByISO(iso?: string) {
+  if (!iso) return true;
+  const today = new Date().toISOString().slice(0, 10);
+  return iso >= today;
 }
 
-// boost score if event looks Texas-based
+// very rough detector for obviously past pages (recaps, /2023/, “2024 Conference Recap” etc.)
+function obviousPastFromText(title: string, snippet: string, url: string) {
+  const t = (title + ' ' + snippet + ' ' + url).toLowerCase();
+  if (/recap|highlights|past event|previous event|what happened/.test(t)) return true;
+  if (/(?:\/|-)2020[0-9](?:\/|-)/.test(t)) {
+    const yearMatch = t.match(/(?:\/|-)(20[0-9]{2})(?:\/|-)/);
+    const year = yearMatch ? parseInt(yearMatch[1], 10) : undefined;
+    const thisYear = new Date().getFullYear();
+    if (year && year < thisYear) return true;
+  }
+  // explicit old years in title body
+  if (/\b2020|2021|2022|2023|2024\b/.test(t)) {
+    const yearMatch = t.match(/20[0-9]{2}/);
+    const year = yearMatch ? parseInt(yearMatch[0], 10) : undefined;
+    const thisYear = new Date().getFullYear();
+    if (year && year < thisYear) return true;
+  }
+  return false;
+}
+
 function applyTexasBoost(list: EventRecord[]) {
   for (const ev of list) {
     const loc = `${ev.city || ''} ${ev.state || ''} ${ev.country || ''}`.toLowerCase();
     const hit = TEXAS_STRINGS.some(t => loc.includes(t));
-    if (hit) {
-      ev.score = (ev.score || 0) + 15;
-    }
+    if (hit) ev.score = (ev.score || 0) + 15;
   }
 }
 
@@ -54,28 +54,38 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   } = req.body || {};
 
   try {
-    // NOTE: we now pass prioritizeTexas into buildQueries so the toggle actually does something
     const queries = buildQueries({ topics, prioritizeHealthcare, prioritizeTexas });
     const seen = new Set<string>();
     const candidates: any[] = [];
 
-    // call SerpAPI for a handful of queries
     for (const q of queries.slice(0, 8)) {
       // eslint-disable-next-line no-await-in-loop
       const rows = await serpSearch(q, maxResults);
       for (const r of rows) {
         if (seen.has(r.link)) continue;
         seen.add(r.link);
+        // pre-drop obvious past/recap pages quickly to save LLM calls
+        if (obviousPastFromText(r.title, r.snippet, r.link)) continue;
         candidates.push(r);
       }
     }
 
-    const scored: EventRecord[] = [];
+    const enriched: EventRecord[] = [];
 
-    // run LLM extraction / scoring
     for (const c of candidates) {
       // eslint-disable-next-line no-await-in-loop
       const ext: any = await scoreAndExtract(c, { prioritizeHealthcare, prioritizeTexas });
+      // hard gate with dates / is_future when present
+      const hasDates = Boolean(ext.start_date || ext.end_date || ext.cfp_deadline);
+      if (hasDates) {
+        const future =
+          (ext.is_future === true)
+          || isFutureByISO(ext.start_date)
+          || isFutureByISO(ext.end_date)
+          || isFutureByISO(ext.cfp_deadline);
+        if (!future) continue; // drop past
+      }
+
       const record: EventRecord = {
         event_name: ext.event_name || c.title,
         organizer: ext.organizer,
@@ -92,21 +102,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         source: 'serp',
         score: ext.score ?? 0
       };
-      scored.push(record);
+      enriched.push(record);
     }
 
-    // filter out past events (only when we got a date)
-    const futureOnly = scored.filter(isFutureEvent);
+    if (prioritizeTexas) applyTexasBoost(enriched);
+    enriched.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
 
-    // apply Texas boost if user selected it
-    if (prioritizeTexas) {
-      applyTexasBoost(futureOnly);
-    }
-
-    // sort by score
-    futureOnly.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
-
-    res.status(200).json({ count: futureOnly.length, results: futureOnly.slice(0, 50) });
+    res.status(200).json({ count: enriched.length, results: enriched.slice(0, 50) });
   } catch (e: any) {
     console.error('search-events error:', e);
     res.status(500).json({ error: e.message || 'Unknown error' });
